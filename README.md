@@ -12,8 +12,6 @@
 
 ## 安装
 
-### 方式一：安装包（推荐）
-
 下载 **`release/ImgZip-Setup-1.0.0.msi`**，双击安装即可。
 
 - **用户级安装**，不需要管理员权限，装到 `%LOCALAPPDATA%\Programs\ImgZip`
@@ -22,10 +20,6 @@
 
 > **前置条件**：需要 **.NET 8 桌面运行时 (x64)**。
 > 安装包会检测；若缺失会提示下载地址：<https://dotnet.microsoft.com/download/dotnet/8.0>（选 .NET Desktop Runtime 8 · x64）
-
-### 方式二：免安装
-
-从源码构建后直接运行 `release/payload/ImgZip.exe`（同样需要 .NET 8 桌面运行时）。
 
 ---
 
