@@ -7,8 +7,6 @@
 默认输出到源文件同目录（也可自定义），界面走 iOS 液态玻璃质感，配色为 `#EB9FAA / #F7D2D5 / #FCEFF0 / #C0CEE4`。
 
 ![空状态](docs/screenshot-empty.png)
-![压缩完成](docs/screenshot-done.png)
-![从安装目录运行](docs/screenshot-installed.png)
 
 ---
 
@@ -126,8 +124,6 @@ src/ImgZip/            应用源码（Core 引擎 / Ui 主题 / MainWindow）
   Core/Cli.cs            命令行入口
   Core/SelfTest.cs       50 项引擎自测
   Ui/GlassTheme.xaml     液态玻璃主题（四色调色板 + 控件模板）
-tools/IconMaker/        PNG → ICO 转换工具
-tools/shot.ps1          开发期截图工具
 installer/              WiX 安装包定义与构建脚本
 docs/                   截图
 ```
