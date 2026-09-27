@@ -7,6 +7,7 @@
 默认输出到源文件同目录（也可自定义）。
 
 ![空状态](docs/screenshot-empty.png)
+![压缩完成](docs/screenshot-done.png)
 
 ---
 
