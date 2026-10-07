@@ -95,6 +95,8 @@ public partial class MainWindow : Window
         FormatBox.Items.Add(new ComboBoxItem { Content = "保持原格式" });
         foreach (var f in ImageFormats.Encodable)
             FormatBox.Items.Add(new ComboBoxItem { Content = f.Name });
+        foreach (var v in VideoFormats.OutputNames)
+            FormatBox.Items.Add(new ComboBoxItem { Content = v });
         FormatBox.SelectedIndex = 0;
 
         // 色深：Tag > 0 → 调色板颜色数；-1 → 灰度；-2 → 黑白；0 → 不处理
@@ -121,8 +123,10 @@ public partial class MainWindow : Window
         DitherBox.SelectedIndex = 1;
 
         var extra = Cli.DetectedExtraFormats();
+        bool hasFfmpeg = VideoCompressor.FfmpegPath != null;
         DropSub.Text = "支持 PNG · JPEG · BMP · GIF · TIFF · ICO" +
-                       (extra.Count > 0 ? " · " + string.Join(" · ", extra) : "") + " 等格式";
+                       (extra.Count > 0 ? " · " + string.Join(" · ", extra) : "") +
+                       (hasFfmpeg ? " · 视频 MP4 · MKV · AVI · WebM 等" : "") + " 等格式";
     }
 
     // ─────────────────────────── 窗口交互 ───────────────────────────
@@ -144,11 +148,22 @@ public partial class MainWindow : Window
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "选择图片",
+            Title = "选择图片或视频",
             Multiselect = true,
-            Filter = ImageFormats.DialogFilter,
+            Filter = FileDialogFilter(),
         };
         if (dlg.ShowDialog(this) == true) AddPaths(dlg.FileNames);
+    }
+
+    /// <summary>图片 + 视频合并的文件对话框过滤器。</summary>
+    private static string FileDialogFilter()
+    {
+        string img = ImageFormats.DialogFilter;
+        string vidExts = string.Join(";", VideoFormats.Extensions.Select(e => "*" + e));
+        // 在"所有支持的图片"总过滤里追加视频扩展名，并加一个单独的视频条目
+        int bar = img.IndexOf('|');
+        string all = img[..bar] + ";" + vidExts;
+        return all + img[bar..] + $"|视频|{vidExts}";
     }
 
     private void OnPickFolder(object sender, RoutedEventArgs e)
@@ -224,9 +239,9 @@ public partial class MainWindow : Window
                 {
                     files.AddRange(Directory.EnumerateFiles(p, "*.*",
                         recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
-                        .Where(ImageFormats.IsSupportedExtension));
+                        .Where(f => ImageFormats.IsSupportedExtension(f) || VideoFormats.IsVideoPath(f)));
                 }
-                else if (File.Exists(p) && ImageFormats.IsSupportedExtension(p))
+                else if (File.Exists(p) && (ImageFormats.IsSupportedExtension(p) || VideoFormats.IsVideoPath(p)))
                 {
                     files.Add(p);
                 }
@@ -328,12 +343,15 @@ public partial class MainWindow : Window
 
     private void OnFormatChanged(object sender, SelectionChangedEventArgs e)
     {
-        bool lossy = SelectedFormat() is "JPEG";
-        if (QualitySlider != null) QualitySlider.IsEnabled = lossy;
-        if (QualityLabel != null) QualityLabel.Opacity = lossy ? 1 : 0.45;
-        if (QualityValue != null) QualityValue.Opacity = lossy ? 1 : 0.45;
+        string? fmt = SelectedFormat();
+        bool lossy = fmt is "JPEG" or "MP4" or "MKV" or "WebM";
+        if (QualitySlider != null) QualitySlider.IsEnabled = lossy || HasVideoInQueue();
+        if (QualityLabel != null) QualityLabel.Opacity = lossy || HasVideoInQueue() ? 1 : 0.45;
+        if (QualityValue != null) QualityValue.Opacity = lossy || HasVideoInQueue() ? 1 : 0.45;
         RefreshPreviews();
     }
+
+    private bool HasVideoInQueue() => _jobs.Any(j => j.IsVideo);
 
     private void OnQualityChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -376,6 +394,7 @@ public partial class MainWindow : Window
             TargetHeight = ParseInt(ResH.Text, 1080),
             KeepAspect = LockAspect.IsChecked == true,
             ShrinkOnly = ChkShrinkOnly.IsChecked == true,
+            PreferGpu = ChkGpu.IsChecked != false,
             FormatName = SelectedFormat(),
             Quality = (int)QualitySlider.Value,
             ColorCount = colors,
@@ -427,6 +446,9 @@ public partial class MainWindow : Window
 
         var items = _jobs.ToList();
         var sem = new SemaphoreSlim(Math.Max(1, Environment.ProcessorCount));
+        // 视频门闩：ffmpeg 编码本身已吃满所有核心，多个视频同时跑只会互相拖慢；
+        // 图片仍按核心数并行，视频一次只跑一个。
+        var videoGate = new SemaphoreSlim(1);
         var progress = new Progress<Action>(a => a());
 
         // 重要：所有 UI 控件的值必须在 UI 线程上先取出来。
@@ -452,9 +474,30 @@ public partial class MainWindow : Window
                         item.Progress = 20;
                     });
 
-                    var res = await Task.Run(() => Compressor.Compress(
-                        item.SourcePath, optLocal, outDirLocal, "_compressed",
-                        skipBigger, keepTime), token).ConfigureAwait(false);
+                    CompressResult res;
+                    if (item.IsVideo)
+                    {
+                        await videoGate.WaitAsync(token).ConfigureAwait(false);
+                        try
+                        {
+                            // 视频进度：ffmpeg 实时回报 0–97%
+                            var vprog = new Progress<double>(p =>
+                            {
+                                item.Progress = 5 + p * 92;
+                                item.StatusText = "压缩中 " + (p * 100).ToString("0") + "%";
+                            });
+                            res = await Task.Run(() => VideoCompressor.Compress(
+                                item.SourcePath, optLocal, outDirLocal, "_compressed",
+                                skipBigger, keepTime, vprog, token), token).ConfigureAwait(false);
+                        }
+                        finally { videoGate.Release(); }
+                    }
+                    else
+                    {
+                        res = await Task.Run(() => Compressor.Compress(
+                            item.SourcePath, optLocal, outDirLocal, "_compressed",
+                            skipBigger, keepTime), token).ConfigureAwait(false);
+                    }
 
                     ((IProgress<Action>)progress).Report(() =>
                     {
@@ -557,14 +600,15 @@ public partial class MainWindow : Window
             return;
         }
         long total = _jobs.Sum(j => j.SourceBytes);
-        SumTitle.Text = $"共 {_jobs.Count} 张 · {JobItemFormat.Size(total)}";
+        SumTitle.Text = $"共 {_jobs.Count} 个 · {JobItemFormat.Size(total)}";
         var opt = CurrentOptions();
         long estimate = 0;
         foreach (var j in _jobs)
         {
             var (w, h) = opt.ComputeSize(Math.Max(1, j.SourceWidth), Math.Max(1, j.SourceHeight));
             double ratio = (double)(w * (long)h) / Math.Max(1, (long)j.SourceWidth * j.SourceHeight);
-            estimate += (long)(j.SourceBytes * ratio * (opt.FormatName == "PNG" ? 0.75 : 0.35));
+            if (j.IsVideo) estimate += (long)(j.SourceBytes * Math.Max(0.15, ratio) * 0.45);
+            else estimate += (long)(j.SourceBytes * ratio * (opt.FormatName == "PNG" ? 0.75 : 0.35));
         }
         SumDetail.Text = $"预计输出约 {JobItemFormat.Size(estimate)}（实际以压缩结果为准）";
         BtnRun.IsEnabled = !_running;

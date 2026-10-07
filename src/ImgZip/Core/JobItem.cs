@@ -44,6 +44,12 @@ public sealed class JobItem : INotifyPropertyChanged
 
     public bool IsWorking => _status == JobStatus.Working;
 
+    private readonly bool _isVideo;
+    /// <summary>该文件按视频处理（走 ffmpeg 管线）。</summary>
+    public bool IsVideo => _isVideo;
+
+    public double DurationSec { get; private set; }
+
     public CompressResult? Result { get; set; }
 
     public SolidColorBrush StatusBrush => _status switch
@@ -60,15 +66,17 @@ public sealed class JobItem : INotifyPropertyChanged
         SourcePath = path;
         FileName = Path.GetFileName(path);
         SourceBytes = SafeLen(path);
+        _isVideo = VideoFormats.IsVideoPath(path);
         Detail = JobItemFormat.Size(SourceBytes);
         LoadMeta();
     }
 
     private static long SafeLen(string p) { try { return new FileInfo(p).Length; } catch { return 0; } }
 
-    /// <summary>读取尺寸/格式与缩略图（小图解码，快且省内存）。</summary>
+    /// <summary>读取尺寸/格式与缩略图（图片走 WIC 小图解码；视频走 ffprobe + ffmpeg 抽帧）。</summary>
     private void LoadMeta()
     {
+        if (_isVideo) { LoadVideoMeta(); return; }
         try
         {
             using var fs = new FileStream(SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -99,13 +107,46 @@ public sealed class JobItem : INotifyPropertyChanged
         }
     }
 
+    private void LoadVideoMeta()
+    {
+        if (VideoCompressor.FfmpegPath == null)
+        {
+            SourceFormat = "视频";
+            Detail = VideoCompressor.MissingHint;
+            Status = JobStatus.Failed;
+            StatusText = "缺少 ffmpeg";
+            return;
+        }
+        var info = VideoCompressor.Probe(SourcePath);
+        if (info == null)
+        {
+            SourceFormat = "视频";
+            Detail = "ffmpeg 无法识别该视频";
+            Status = JobStatus.Failed;
+            StatusText = "无法读取";
+            return;
+        }
+        SourceWidth = info.Width;
+        SourceHeight = info.Height;
+        DurationSec = info.DurationSec;
+        SourceFormat = $"{info.Codec}{(info.HasAudio ? "" : " · 无声")}";
+        Detail = $"{info.Width}×{info.Height} · {VideoCompressor.FmtDuration(info.DurationSec)} · {SourceFormat} · {JobItemFormat.Size(SourceBytes)}";
+        Thumbnail = VideoCompressor.GrabThumbnail(SourcePath, info.DurationSec);
+    }
+
     /// <summary>按当前设置刷新"预计输出"提示。</summary>
     public void RefreshPreview(CompressOptions opt)
     {
         if (SourceWidth <= 0) { Preview = ""; return; }
         var (w, h) = opt.ComputeSize(SourceWidth, SourceHeight);
-        string fmt = opt.FormatName ?? ImageFormats.PickTarget(ImageFormats.ByPath(SourcePath), false).Name;
-        Preview = $"{w}×{h} · {fmt}";
+        if (_isVideo)
+        {
+            string fmt = VideoFormats.PickTarget(SourcePath, opt.FormatName).Container;
+            Preview = $"{w}×{h} · {fmt}";
+            return;
+        }
+        string imgFmt = opt.FormatName ?? ImageFormats.PickTarget(ImageFormats.ByPath(SourcePath), false).Name;
+        Preview = $"{w}×{h} · {imgFmt}";
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

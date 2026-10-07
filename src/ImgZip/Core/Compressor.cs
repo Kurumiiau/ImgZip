@@ -32,6 +32,9 @@ public sealed class CompressOptions
     /// <summary>重采样算法</summary>
     public ResizeMode Mode { get; set; } = ResizeMode.Auto;
 
+    /// <summary>视频：优先使用 GPU 硬件编码（NVENC/AMF/QSV，自动探测）</summary>
+    public bool PreferGpu { get; set; } = true;
+
     /// <summary>色深压缩：调色板颜色数（0 = 不量化；2–256）</summary>
     public int ColorCount { get; set; }
 
@@ -457,7 +460,10 @@ public static class Compressor
     /// <summary>输出文件名：同目录加后缀；冲突自动加序号。</summary>
     public static string BuildOutputPath(string srcPath, string? outputDir, string suffix, ImageFormatInfo target)
     {
-        string dir = string.IsNullOrWhiteSpace(outputDir) ? (Path.GetDirectoryName(srcPath) ?? ".") : outputDir!;
+        // 注意相对路径：GetDirectoryName("a.png") 返回空串而非 null，必须用 GetFullPath 兜底
+        string dir = string.IsNullOrWhiteSpace(outputDir)
+            ? (Path.GetDirectoryName(Path.GetFullPath(srcPath)) ?? ".")
+            : outputDir!;
         Directory.CreateDirectory(dir);
         string baseName = Path.GetFileNameWithoutExtension(srcPath) + suffix;
         string candidate = Path.Combine(dir, baseName + target.Extension);

@@ -13,15 +13,15 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Platforms>AnyCPU;x64</Platforms>
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
     <Product>图片压缩器 ImgZip</Product>
     <AssemblyTitle>图片压缩器 ImgZip</AssemblyTitle>
     <Company>Kurumiiau</Company>
     <Authors>Kurumiiau</Authors>
     <Copyright>© Kurumiiau</Copyright>
-    <Description>支持任意格式的高质量图片压缩工具 · by Kurumiiau</Description>
+    <Description>支持任意格式的高质量图片压缩工具 · 新增视频压缩（MP4/MKV/AVI/WebM，分辨率缩放与色深压缩） · by Kurumiiau</Description>
     <!-- 单文件发布相关 -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType Condition="'$(Configuration)'=='Release'">none</DebugType>

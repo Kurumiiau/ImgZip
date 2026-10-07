@@ -44,26 +44,29 @@ public static class Cli
         Log.Info("");
         Log.Info("用法:");
         Log.Info("  ImgZip.exe --cli --in <文件或目录...> [选项]");
+        Log.Info("  支持图片（PNG/JPEG/WebP/…）与视频（MP4/MKV/AVI/WebM/…，需 ffmpeg）");
         Log.Info("");
-        Log.Info("尺寸选项（二选一）:");
+        Log.Info("尺寸选项（图片与视频通用，二选一）:");
         Log.Info("  --scale <1-100>        缩放倍率百分比（默认 50）");
         Log.Info("  --width <n> --height <n>  目标分辨率");
         Log.Info("  --no-aspect            分辨率模式下不锁宽高比");
         Log.Info("  --allow-upscale        允许放大（默认只缩不放）");
-        Log.Info("  --mode area|bilinear|bicubic|nearest|auto   重采样算法");
+        Log.Info("  --mode area|bilinear|bicubic|nearest|auto   重采样算法（仅图片）");
         Log.Info("");
-        Log.Info("色深压缩（对 PNG/BMP 会写成真正的索引色文件，体积下降明显）:");
-        Log.Info("  --colors <2-256>       调色板颜色数，如 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2");
-        Log.Info("  --gray                 转 8 位灰度");
-        Log.Info("  --bw                   转 1 位黑白（默认 Otsu 自动阈值）");
-        Log.Info("  --threshold <0-255>    指定黑白阈值");
-        Log.Info("  --dither fs|bayer|none 抖动方式（默认 none，减色时建议 fs）");
+        Log.Info("色深压缩:");
+        Log.Info("  图片（PNG/BMP 写成真正的索引色文件）:");
+        Log.Info("  --colors <2-256>       调色板颜色数（视频按 8 位处理）");
+        Log.Info("  --gray                 转 8 位灰度（图片/视频）");
+        Log.Info("  --bw                   转 1 位黑白（图片/视频）");
+        Log.Info("  --threshold <0-255>    指定黑白阈值（仅图片）");
+        Log.Info("  --dither fs|bayer|none 抖动方式（仅图片，减色时建议 fs）");
         Log.Info("");
         Log.Info("输出选项:");
         Log.Info("  --out <目录>           输出目录（默认与源文件同目录）");
         Log.Info("  --suffix <文本>        文件名后缀（默认 _compressed）");
-        Log.Info("  --format <名称>        输出格式 PNG/JPEG/BMP/GIF/TIFF（默认保持原格式）");
-        Log.Info("  --quality <1-100>      有损格式质量（默认 82）");
+        Log.Info("  --format <名称>        图片: PNG/JPEG/BMP/GIF/TIFF；视频: MP4/MKV/WebM（默认保持原格式）");
+        Log.Info("  --quality <1-100>      有损格式质量（视频映射 CRF，默认 82）");
+        Log.Info("  --cpu                  视频强制 CPU 编码（默认检测到 GPU 时优先硬件编码）");
         Log.Info("  --recursive            递归子目录");
         Log.Info("  --skip-bigger          结果更大时跳过");
         Log.Info("  --keep-time            保留原始时间戳");
@@ -144,11 +147,11 @@ public static class Cli
         {
             if (Directory.Exists(p))
                 files.AddRange(Directory.EnumerateFiles(p, "*.*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
-                    .Where(ImageFormats.IsSupportedExtension));
+                    .Where(f => ImageFormats.IsSupportedExtension(f) || VideoFormats.IsVideoPath(f)));
             else if (File.Exists(p)) files.Add(p);
             else Log.Fail("找不到: " + p);
         }
-        if (files.Count == 0) { Log.Fail("没有可处理的图片"); return 2; }
+        if (files.Count == 0) { Log.Fail("没有可处理的文件"); return 2; }
 
         var opt = new CompressOptions
         {
@@ -160,6 +163,7 @@ public static class Cli
             ShrinkOnly = !args.Contains("--allow-upscale"),
             FormatName = ArgValue(args, "--format"),
             Quality = int.TryParse(ArgValue(args, "--quality"), out var q) ? q : 82,
+            PreferGpu = !args.Contains("--cpu"),
             Mode = ParseMode(ArgValue(args, "--mode")),
             ColorCount = int.TryParse(ArgValue(args, "--colors"), out var cc) ? cc : 0,
             Grayscale = args.Contains("--gray"),
@@ -181,17 +185,18 @@ public static class Cli
         Log.Info("");
 
         var results = new List<CompressResult>();
+        var progress = new Progress<double>(_ => { });
         bool parallel = args.Contains("--parallel");   // 复现 GUI 的线程池场景，用于排查线程相关问题
         if (parallel)
         {
-            var tasks = files.Select(f => Task.Run(() => Compressor.Compress(f, opt, outDir, suffix, skipBigger, keepTime))).ToArray();
+            var tasks = files.Select(f => Task.Run(() => CompressOne(f, opt, outDir, suffix, skipBigger, keepTime, progress))).ToArray();
             Task.WaitAll(tasks);
             results.AddRange(tasks.Select(t => t.Result));
         }
         else
         {
             foreach (var f in files)
-                results.Add(Compressor.Compress(f, opt, outDir, suffix, skipBigger, keepTime));
+                results.Add(CompressOne(f, opt, outDir, suffix, skipBigger, keepTime, progress));
         }
 
         long before = 0, after = 0;
@@ -215,6 +220,13 @@ public static class Cli
 
         return failed > 0 ? 1 : 0;
     }
+
+    /// <summary>按文件类型分流：图片走 WIC 管线，视频走 ffmpeg 管线。</summary>
+    private static CompressResult CompressOne(string f, CompressOptions opt, string? outDir, string suffix,
+        bool skipBigger, bool keepTime, IProgress<double> progress)
+        => VideoFormats.IsVideoPath(f)
+            ? VideoCompressor.Compress(f, opt, outDir, suffix, skipBigger, keepTime, progress)
+            : Compressor.Compress(f, opt, outDir, suffix, skipBigger, keepTime);
 
     private static ResizeMode ParseMode(string? m) => (m ?? "auto").ToLowerInvariant() switch
     {

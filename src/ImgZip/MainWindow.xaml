@@ -431,8 +431,10 @@
                                     <Border Height="1" Background="#3AC0CEE4" Margin="0,13,0,11" />
 
                                     <TextBlock Text="其它" Style="{StaticResource T.Section}" />
-                                    <CheckBox x:Name="ChkShrinkOnly" Content="只缩小，不放大" Style="{StaticResource Switch}"
+                                    <CheckBox x:Name="ChkGpu" Content="视频优先 GPU 编码（无 GPU 自动用 CPU）" Style="{StaticResource Switch}"
                                               IsChecked="True" Checked="OnOptionsChanged" Unchecked="OnOptionsChanged" />
+                                    <CheckBox x:Name="ChkShrinkOnly" Content="只缩小，不放大" Style="{StaticResource Switch}"
+                                              IsChecked="True" Margin="0,8,0,0" Checked="OnOptionsChanged" Unchecked="OnOptionsChanged" />
                                     <CheckBox x:Name="ChkSkipBigger" Content="结果更大时自动跳过" Style="{StaticResource Switch}"
                                               IsChecked="True" Margin="0,8,0,0" Checked="OnOptionsChanged" Unchecked="OnOptionsChanged" />
                                     <CheckBox x:Name="ChkKeepTime" Content="保留文件时间戳" Style="{StaticResource Switch}"
